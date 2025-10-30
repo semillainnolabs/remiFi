@@ -4,6 +4,7 @@ const CircleService = require("./circleService");
 const storageService = require("./storageService");
 const networkService = require("./networkService");
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+import { supabase } from "./supabaseService";
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -14,7 +15,7 @@ class TelegramService {
       throw new Error("Telegram bot token is missing");
     }
     this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
-    
+
     this.genAI = new GoogleGenerativeAI(geminiApiKey);
     // Initialize the Gemini model (e.g., 'gemini-pro')
     this.model = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest" });
@@ -45,21 +46,21 @@ class TelegramService {
     this.bot.onText(/\/networks/, this.handleListNetworks.bind(this));
 
     this.bot.on('message', async (msg) => {
-        const chatId = msg.chat.id;
-        const userText = msg.text;
+      const chatId = msg.chat.id;
+      const userText = msg.text;
 
-        try {
-            // Generate content using Gemini
-            const result = await this.model.generateContent(userText);
-            const response = await result.response;
-            const text = response.text();
+      try {
+        // Generate content using Gemini
+        const result = await this.model.generateContent(userText);
+        const response = await result.response;
+        const text = response.text();
 
-            // Send the Gemini response back to Telegram
-            this.bot.sendMessage(chatId, text);
-        } catch (error) {
-            console.error("Error interacting with Gemini API:", error);
-            this.bot.sendMessage(chatId, "Sorry, I couldn't process your request at the moment.");
-        }
+        // Send the Gemini response back to Telegram
+        this.bot.sendMessage(chatId, text);
+      } catch (error) {
+        console.error("Error interacting with Gemini API:", error);
+        this.bot.sendMessage(chatId, "Sorry, I couldn't process your request at the moment.");
+      }
     });
   }
 
@@ -114,6 +115,10 @@ class TelegramService {
 
     try {
       await this.circleService.init();
+
+      // Check for existing wallet in supabase
+      
+
       const userWallets = storageService.getWallet(userId) || {};
       if (userWallets[currentNetwork.name]) {
         await this.bot.sendMessage(

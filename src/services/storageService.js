@@ -3,7 +3,7 @@ const path = require("path");
 
 class StorageService {
   constructor() {
-    this.storageFile = path.join(__dirname, "../../data/wallets.json");
+    this.storageFile = path.join(__dirname, "../../data/test/wallets.json");
     this.ensureStorageExists();
   }
 
