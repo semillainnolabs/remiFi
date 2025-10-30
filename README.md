@@ -1,4 +1,8 @@
-# Telegram Circle Wallet Bot
+# RemiFi Bot
+
+An AI Agent for helping U.S. immigrants to make cross border payments and fund their families wallets back home.
+
+## Telegram Circle Wallet Bot
 
 A powerful Telegram bot that enables developers to create and manage SCA (Smart Contract Account) wallets using Circle's SDK. This bot simplifies interactions across various networks, allowing users to perform operations such as creating wallets, sending USDC, and checking balances swiftly.
 
