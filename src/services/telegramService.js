@@ -51,9 +51,14 @@ class TelegramService {
 
     this.genAI = new GoogleGenerativeAI(geminiApiKey);
     const generationConfig = {
-        temperature: 0.1, // Lower temperature for more deterministic function calls
+        temperature: 0.2, // Slightly higher temp for more natural text
     };
-    this.model = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest", tools, generationConfig });
+    // Model for function calling
+    this.toolModel = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest", tools, generationConfig });
+    // Model for generating friendly text responses
+    this.textModel = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest", generationConfig });
+
+
 
     this.circleService = new CircleService(this.bot);
     this.initializeCircleSDK().catch((error) => {
@@ -73,6 +78,7 @@ class TelegramService {
   setupCommands() {
     this.bot.onText(/\/start/, this.handleStart.bind(this));
     this.bot.onText(/\/createWallet/, this.handleCreateWallet.bind(this));
+    // Commands call the execution methods without a userText, resulting in a standard response
     this.bot.onText(/\/balance/, (msg) => this._executeBalanceCheck(msg.chat.id, msg.from.id));
     this.bot.onText(/\/send (.+)/, (msg, match) => {
         const params = match[1].split(" ");
@@ -92,8 +98,39 @@ class TelegramService {
     this.bot.on('message', this.handleNaturalLanguage.bind(this));
   }
 
+  // NEW: Helper to generate friendly responses using Gemini
+  async sendFriendlyResponse(chatId, action, data, userText) {
+    let prompt = `You are RemiFi, a friendly AI assistant helping users manage their digital dollars. A user just performed an action. Your task is to craft a natural, reassuring, and clear response, removing blockchain jargon or technical concepts. This is a web2 user so responses should be similar to what you get interacting with your traditional fintech app. Instead of USDC say digital dollars always. Remove markdown markers, always respond in plain text with emojis just as regular persons do.`;
+
+    switch (action) {
+        case 'balance_check_success':
+            prompt += `\nThe user asked: "${userText}".\nThe action was a successful balance check. Their balance is ${data.balance} USDC on the ${data.network} network. Inform them of their balance in a friendly way, avoiding blockchain words and concepts.`;
+            break;
+        case 'send_success':
+            prompt += `\nThe user asked: "${userText}".\nThe action was a successful transaction. They sent ${data.amount} USDC to ${data.destinationAddress}. The transaction is now being processed. Reassure them that the funds are on the way, avoiding blockchain words and concepts.`;
+            break;
+        default:
+            // Fallback for unknown actions
+            await this.bot.sendMessage(chatId, "Action completed successfully!");
+            return;
+    }
+    
+    try {
+        const result = await this.textModel.generateContent(prompt);
+        const text = result.response.text();
+        await this.bot.sendMessage(chatId, text);
+    } catch (error) {
+        console.error("Error generating friendly response:", error);
+        // Fallback to a simple message if Gemini fails
+        if (action === 'balance_check_success') {
+            await this.bot.sendMessage(chatId, `Your balance on ${data.network} is: ${data.balance} USDC`);
+        } else if (action === 'send_success') {
+            await this.bot.sendMessage(chatId, `✅ Success! Your transaction of ${data.amount} to ${data.destinationAddress} has been submitted.`);
+        }
+    }
+  }
+
   async handleNaturalLanguage(msg) {
-    // Ignore commands which are handled by onText listeners
     if (msg.text && msg.text.startsWith('/')) {
         return;
     }
@@ -103,20 +140,21 @@ class TelegramService {
     const userText = msg.text;
 
     try {
-      const chat = this.model.startChat();
+      const chat = this.toolModel.startChat();
       const result = await chat.sendMessage(userText);
       const call = result.response.functionCalls()?.[0];
 
       if (call) {
-        // A function call was detected
         const { name, args } = call;
         switch (name) {
           case 'get_balance':
-            await this._executeBalanceCheck(chatId, userId);
+            // Pass the user's text for context
+            await this._executeBalanceCheck(chatId, userId, userText);
             break;
           case 'send_usdc':
             if (args.destinationAddress && args.amount) {
-              await this._executeSend(chatId, userId, args.destinationAddress, args.amount);
+              // Pass the user's text for context
+              await this._executeSend(chatId, userId, args.destinationAddress, args.amount, userText);
             } else {
               await this.bot.sendMessage(chatId, "I understood you want to send money, but I need the address and the amount.");
             }
@@ -125,7 +163,6 @@ class TelegramService {
             await this.bot.sendMessage(chatId, "Sorry, I'm not sure how to handle that request.");
         }
       } else {
-        // No function call, just a conversational response
         const response = result.response;
         const text = response.text();
         this.bot.sendMessage(chatId, text);
@@ -137,9 +174,10 @@ class TelegramService {
   }
 
 
-  // --- Action Execution Methods (callable by both commands and AI) ---
+  // --- Action Execution Methods (Updated) ---
 
-  async _executeBalanceCheck(chatId, userId) {
+  // userText is optional. If provided, a friendly response will be generated.
+  async _executeBalanceCheck(chatId, userId, userText = null) {
     try {
       const currentNetwork = networkService.getCurrentNetwork().name;
       const wallet = await supabaseService.getWallet(userId, currentNetwork);
@@ -148,14 +186,22 @@ class TelegramService {
         return;
       }
       const balance = await this.circleService.getWalletBalance(wallet.walletid);
-      await this.bot.sendMessage(chatId, `Your balance on ${balance.network} is: ${balance.usdc} USDC`);
+
+      if (userText) {
+          // AI-triggered action: Generate a friendly response
+          await this.sendFriendlyResponse(chatId, 'balance_check_success', { balance: balance.usdc, network: balance.network }, userText);
+      } else {
+          // Command-triggered action: Send a standard response
+          await this.bot.sendMessage(chatId, `Your balance on ${balance.network} is: ${balance.usdc} USDC`);
+      }
     } catch (error) {
       console.error("Error in _executeBalanceCheck:", error);
       await this.bot.sendMessage(chatId, "Error getting balance. Try again later.");
     }
   }
 
-  async _executeSend(chatId, userId, destinationAddress, amount) {
+  // userText is optional. If provided, a friendly response will be generated.
+  async _executeSend(chatId, userId, destinationAddress, amount, userText = null) {
     try {
       const currentNetwork = networkService.getCurrentNetwork().name;
       const wallet = await supabaseService.getWallet(userId, currentNetwork);
@@ -164,7 +210,7 @@ class TelegramService {
         throw new Error(`No wallet found for you on ${currentNetwork}. Please create one first using /createWallet.`);
       }
 
-      await this.bot.sendMessage(chatId, `Got it. Sending ${amount} USDC to ${destinationAddress} on ${currentNetwork}...`);
+      await this.bot.sendMessage(chatId, `Got it. Processing your request to send $${amount}...`);
 
       const txResponse = await this.circleService.sendTransaction(
         wallet.walletid,
@@ -172,21 +218,25 @@ class TelegramService {
         amount,
       );
 
-      const message =
-        `✅ Success! Your transaction has been submitted.\n\n` +
-        `Amount: ${amount} USDC\n` +
-        `To: ${destinationAddress}\n` +
-        `Transaction ID: ${txResponse.id}`;
-
-      await this.bot.sendMessage(chatId, message);
+      if (userText) {
+          // AI-triggered action: Generate a friendly response
+          await this.sendFriendlyResponse(chatId, 'send_success', { amount, destinationAddress }, userText);
+      } else {
+          // Command-triggered action: Send a standard response
+          const message = `✅ Success! Your transaction has been submitted.\n\n` +
+                          `Amount: ${amount} USDC\n` +
+                          `To: ${destinationAddress}\n` +
+                          `Transaction ID: ${txResponse.id}`;
+          await this.bot.sendMessage(chatId, message);
+      }
     } catch (error) {
       console.error("Error sending transaction:", error);
       await this.bot.sendMessage(chatId, `❌ Error: ${error.message || "Failed to send transaction."}`);
     }
   }
 
-  // --- Original Command Handlers ---
-
+  // --- Other Command Handlers (Unchanged) ---
+  
   async handleStart(msg) {
     const chatId = msg.chat.id;
     const message = `Welcome to RemiFi!\n\nYou can talk to me naturally, like "check my balance" or "send 5 USDC to 0x...".\n\nOr you can use commands:\n/createWallet\n/address\n/balance\n/send <address> <amount>`;
@@ -219,10 +269,9 @@ class TelegramService {
       }
 
       const newWallet = walletResponse.walletData.data.wallets[0];
-      // *** FIX: Use walletResponse.walletId (camelCase) from the service response ***
       await supabaseService.saveWallet(
         userId,
-        walletResponse.walletid,
+        walletResponse.walletid, 
         newWallet.address,
         currentNetwork.name
       );
