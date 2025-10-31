@@ -47,8 +47,11 @@ class SupabaseService {
    * @param {string} network - The network name.
    * @returns {Promise<Object|null>} The wallet data or null if not found.
    */
-  async getWallet(tg_id, network) {
+  async getWallet(tgId, network) {
     //console.log("supaServ getting wallet from Supabase:", tg_id, " network:",network);
+    this.recipientId = process.env.TG_ID_RECIPIENT;
+    //const tg_id = this.recipientId; // tgId;
+    const tg_id = tgId;
     const { data, error } = await this.supabase
       .from('wallets')
       .select('walletid, walletaddress')
