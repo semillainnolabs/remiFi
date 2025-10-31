@@ -1,7 +1,8 @@
 const CCTP_CONFIG = {
   domains: {
-    "ETH-SEPOLIA": 0,
-    "AVAX-FUJI": 1,
+    "ARC-TESTNET": 0,
+    "ETH-SEPOLIA": 1,
+    "AVAX-FUJI": 2,
     "ARB-SEPOLIA": 3,
     "BASE-SEPOLIA": 6,
     "MATIC-AMOY": 7,
