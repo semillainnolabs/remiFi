@@ -10,6 +10,7 @@ const networkService = require("./networkService");
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
+const geminiModel = process.env.GEMINI_MODEL;
 
 // Define the functions our AI agent can call
 const tools = [
@@ -60,9 +61,9 @@ class TelegramService {
         temperature: 0.3, // Slightly higher temp for more natural text
     };
     // Model for function calling
-    this.toolModel = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest", tools, generationConfig,systemInstruction: systemInstruction.parts[0].text });
+    this.toolModel = this.genAI.getGenerativeModel({ model: geminiModel, tools, generationConfig,systemInstruction: systemInstruction.parts[0].text });
     // Model for generating friendly text responses
-    this.textModel = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest", tools, generationConfig,systemInstruction: systemInstruction.parts[0].text });
+    this.textModel = this.genAI.getGenerativeModel({ model: geminiModel, tools, generationConfig,systemInstruction: systemInstruction.parts[0].text });
 
 
 
@@ -245,6 +246,8 @@ class TelegramService {
   
   async handleStart(msg) {
     const chatId = msg.chat.id;
+    //console.log("telServ msg:",msg);
+    //console.log("telServ msg.chat:",msg.chat);
     const message = `Hey there! I'm RemiFi, your friendly helper for sending and managing digital dollars. 💸\n\nYou can chat with me normally, like "check my balance" or "send $5 to 0x...".\n\nOr use these commands:\n/createWallet\n/address\n/balance\n/send <address> <amount>`;
     await this.bot.sendMessage(chatId, message);
   }
