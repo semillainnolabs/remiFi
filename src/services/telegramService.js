@@ -1,10 +1,9 @@
 const TelegramBot = require("node-telegram-bot-api");
 const config = require("../config/index.js");
 const CircleService = require("./circleService");
-const storageService = require("./storageService");
+const supabaseService = require("./supabaseService"); // <-- Replaced storageService
 const networkService = require("./networkService");
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-//import { supabase } from "./supabaseService";
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -16,7 +15,6 @@ class TelegramService {
     this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
 
     this.genAI = new GoogleGenerativeAI(geminiApiKey);
-    // Initialize the Gemini model (e.g., 'gemini-pro')
     this.model = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest" });
 
     this.circleService = new CircleService(this.bot);
@@ -45,16 +43,18 @@ class TelegramService {
     this.bot.onText(/\/networks/, this.handleListNetworks.bind(this));
 
     this.bot.on('message', async (msg) => {
+        // We will enhance this later to prevent it from firing on commands.
+        if (msg.text && msg.text.startsWith('/')) {
+            return;
+        }
       const chatId = msg.chat.id;
       const userText = msg.text;
 
       try {
-        // Generate content using Gemini
         const result = await this.model.generateContent(userText);
         const response = await result.response;
         const text = response.text();
 
-        // Send the Gemini response back to Telegram
         this.bot.sendMessage(chatId, text);
       } catch (error) {
         console.error("Error interacting with Gemini API:", error);
@@ -74,7 +74,6 @@ class TelegramService {
     const networkName = match[1].toUpperCase();
 
     try {
-      const networkService = require("./networkService");
       const network = networkService.setNetwork(networkName);
       await this.bot.sendMessage(
         chatId,
@@ -90,16 +89,13 @@ class TelegramService {
 
   async handleListNetworks(msg) {
     const chatId = msg.chat.id;
-    const networkService = require("./networkService");
     const networks = networkService.getAllNetworks();
-
     const networksMessage = Object.entries(networks)
       .map(
         ([key, network]) =>
           `${network.name} ${network.isTestnet ? "(Testnet)" : ""}`,
       )
       .join("\n");
-
     await this.bot.sendMessage(
       chatId,
       `Available networks:\n${networksMessage}\n\nUse /network <name> to switch networks`,
@@ -109,27 +105,22 @@ class TelegramService {
   async handleCreateWallet(msg) {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
-    const networkService = require("./networkService");
     const currentNetwork = networkService.getCurrentNetwork();
 
     try {
       await this.circleService.init();
 
-      // Check for existing wallet in supabase
-      
-
-      const userWallets = storageService.getWallet(userId) || {};
-      if (userWallets[currentNetwork.name]) {
+      const existingWallet = await supabaseService.getWallet(userId, currentNetwork.name);
+      if (existingWallet) {
         await this.bot.sendMessage(
           chatId,
           `You already have a wallet on ${currentNetwork.name}!\n` +
-          `Your wallet address: ${userWallets[currentNetwork.name].address}\n\n` +
+          `Your wallet address: ${existingWallet.address}\n\n` +
           `Use /network <network-name> to switch networks if you want to create a wallet on another network.`,
         );
         return;
       }
 
-      const networkName = currentNetwork.name;
       const walletResponse = await this.circleService.createWallet();
       if (!walletResponse?.walletData?.data?.wallets?.[0]) {
         throw new Error(
@@ -137,17 +128,17 @@ class TelegramService {
         );
       }
 
-      storageService.saveWallet(userId, {
-        ...(storageService.getWallet(userId) || {}),
-        [networkName]: {
-          walletId: walletResponse.walletId,
-          address: walletResponse.walletData.data.wallets[0].address,
-        },
-      });
+      const newWallet = walletResponse.walletData.data.wallets[0];
+      await supabaseService.saveWallet(
+        userId,
+        walletResponse.walletid,
+        newWallet.address,
+        currentNetwork.name
+      );
 
       await this.bot.sendMessage(
         chatId,
-        `✅ Wallet created on ${networkName}!\nAddress: ${walletResponse.walletData.data.wallets[0].address}`,
+        `✅ Wallet created on ${currentNetwork.name}!\nAddress: ${newWallet.address}`,
       );
     } catch (error) {
       console.error("Wallet creation error:", error);
@@ -168,8 +159,8 @@ class TelegramService {
     const currentNetwork = networkService.getCurrentNetwork().name;
 
     try {
-      const wallets = storageService.getWallet(userId);
-      if (!wallets || !wallets[currentNetwork]) {
+      const wallet = await supabaseService.getWallet(userId, currentNetwork);
+      if (!wallet) {
         await this.bot.sendMessage(
           chatId,
           "Create a wallet first with /createWallet",
@@ -177,9 +168,7 @@ class TelegramService {
         return;
       }
 
-      const balance = await this.circleService.getWalletBalance(
-        wallets[currentNetwork].walletId,
-      );
+      const balance = await this.circleService.getWalletBalance(wallet.walletid);
       await this.bot.sendMessage(
         chatId,
         `USDC Balance on ${balance.network}: ${balance.usdc} USDC`,
@@ -198,8 +187,9 @@ class TelegramService {
     const userId = msg.from.id;
     const currentNetwork = networkService.getCurrentNetwork().name;
 
-    const wallets = storageService.getWallet(userId);
-    if (!wallets || !wallets[currentNetwork]) {
+    const wallet = await supabaseService.getWallet(userId, currentNetwork);
+    console.log("teleServ wallet from Supabase wallet:", wallet);
+    if (!wallet) {
       await this.bot.sendMessage(
         chatId,
         `No wallet found for ${currentNetwork}. Create one with /createWallet`,
@@ -209,7 +199,7 @@ class TelegramService {
 
     await this.bot.sendMessage(
       chatId,
-      `Wallet address on ${currentNetwork}: ${wallets[currentNetwork].address}`,
+      `Wallet address on ${currentNetwork}: ${wallet.address}`,
     );
   }
 
@@ -218,8 +208,8 @@ class TelegramService {
     const userId = msg.from.id;
     const currentNetwork = networkService.getCurrentNetwork().name;
 
-    const wallets = storageService.getWallet(userId);
-    if (!wallets || !wallets[currentNetwork]) {
+    const wallet = await supabaseService.getWallet(userId, currentNetwork);
+    if (!wallet) {
       await this.bot.sendMessage(
         chatId,
         `No wallet found for ${currentNetwork}. Create one with /createWallet`,
@@ -229,17 +219,18 @@ class TelegramService {
 
     await this.bot.sendMessage(
       chatId,
-      `Wallet ID on ${currentNetwork}: ${wallets[currentNetwork].walletId}`,
+      `Wallet ID on ${currentNetwork}: ${wallet.walletid}`,
     );
   }
 
   async handleSend(msg, match) {
     const chatId = msg.chat.id;
-    const userId = msg.from.id.toString();
+    const userId = msg.from.id;
     try {
       const currentNetwork = networkService.getCurrentNetwork().name;
-      const wallets = storageService.getWallet(userId);
-      if (!wallets || !wallets[currentNetwork]) {
+      const wallet = await supabaseService.getWallet(userId, currentNetwork);
+
+      if (!wallet) {
         throw new Error(
           `No wallet found for ${currentNetwork}. Please create a wallet first using /createWallet`,
         );
@@ -256,10 +247,8 @@ class TelegramService {
         `Processing transaction on ${currentNetwork}...`,
       );
 
-      console.error("senTx wallet:", wallets[currentNetwork].walletId, " destinationAddress:", destinationAddress, " amount:", amount);
-
       const txResponse = await this.circleService.sendTransaction(
-        wallets[currentNetwork].walletId,
+        wallet.walletid,
         destinationAddress,
         amount,
       );
