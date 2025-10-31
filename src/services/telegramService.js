@@ -5,11 +5,42 @@ FILE: src/services/telegramService.js
 const TelegramBot = require("node-telegram-bot-api");
 const config = require("../config/index.js");
 const CircleService = require("./circleService");
-const supabaseService = require("./supabaseService"); // <-- Replaced storageService
+const supabaseService = require("./supabaseService");
 const networkService = require("./networkService");
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
+
+// Define the functions our AI agent can call
+const tools = [
+  {
+    "functionDeclarations": [
+      {
+        "name": "get_balance",
+        "description": "Get the USDC balance for the user's wallet on the current active network.",
+        "parameters": { "type": "OBJECT", "properties": {} } // No parameters needed
+      },
+      {
+        "name": "send_usdc",
+        "description": "Send a specified amount of USDC to a destination address.",
+        "parameters": {
+          "type": "OBJECT",
+          "properties": {
+            "destinationAddress": {
+              "type": "STRING",
+              "description": "The recipient's wallet address (e.g., '0x123...')"
+            },
+            "amount": {
+              "type": "STRING",
+              "description": "The amount of USDC to send (e.g., '10.50')"
+            }
+          },
+          "required": ["destinationAddress", "amount"]
+        }
+      }
+    ]
+  }
+];
 
 class TelegramService {
   constructor() {
@@ -19,7 +50,10 @@ class TelegramService {
     this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
 
     this.genAI = new GoogleGenerativeAI(geminiApiKey);
-    this.model = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest" });
+    const generationConfig = {
+        temperature: 0.1, // Lower temperature for more deterministic function calls
+    };
+    this.model = this.genAI.getGenerativeModel({ model: "gemini-flash-lite-latest", tools, generationConfig });
 
     this.circleService = new CircleService(this.bot);
     this.initializeCircleSDK().catch((error) => {
@@ -39,40 +73,171 @@ class TelegramService {
   setupCommands() {
     this.bot.onText(/\/start/, this.handleStart.bind(this));
     this.bot.onText(/\/createWallet/, this.handleCreateWallet.bind(this));
-    this.bot.onText(/\/balance/, this.handleBalance.bind(this));
-    this.bot.onText(/\/send (.+)/, this.handleSend.bind(this));
+    this.bot.onText(/\/balance/, (msg) => this._executeBalanceCheck(msg.chat.id, msg.from.id));
+    this.bot.onText(/\/send (.+)/, (msg, match) => {
+        const params = match[1].split(" ");
+        if (params.length !== 2) {
+            this.bot.sendMessage(msg.chat.id, "Invalid format. Use: /send <address> <amount>");
+            return;
+        }
+        const [destinationAddress, amount] = params;
+        this._executeSend(msg.chat.id, msg.from.id, destinationAddress, amount);
+    });
     this.bot.onText(/\/address/, this.handleAddress.bind(this));
     this.bot.onText(/\/walletId/, this.handleWalletId.bind(this));
     this.bot.onText(/\/network (.+)/, this.handleNetwork.bind(this));
     this.bot.onText(/\/networks/, this.handleListNetworks.bind(this));
 
-    this.bot.on('message', async (msg) => {
-        // We will enhance this later to prevent it from firing on commands.
-        if (msg.text && msg.text.startsWith('/')) {
-            return;
-        }
-      const chatId = msg.chat.id;
-      const userText = msg.text;
-
-      try {
-        const result = await this.model.generateContent(userText);
-        const response = await result.response;
-        const text = response.text();
-
-        this.bot.sendMessage(chatId, text);
-      } catch (error) {
-        console.error("Error interacting with Gemini API:", error);
-        this.bot.sendMessage(chatId, "Sorry, I couldn't process your request at the moment.");
-      }
-    });
+    // Main message handler for AI processing
+    this.bot.on('message', this.handleNaturalLanguage.bind(this));
   }
+
+  async handleNaturalLanguage(msg) {
+    // Ignore commands which are handled by onText listeners
+    if (msg.text && msg.text.startsWith('/')) {
+        return;
+    }
+
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const userText = msg.text;
+
+    try {
+      const chat = this.model.startChat();
+      const result = await chat.sendMessage(userText);
+      const call = result.response.functionCalls()?.[0];
+
+      if (call) {
+        // A function call was detected
+        const { name, args } = call;
+        switch (name) {
+          case 'get_balance':
+            await this._executeBalanceCheck(chatId, userId);
+            break;
+          case 'send_usdc':
+            if (args.destinationAddress && args.amount) {
+              await this._executeSend(chatId, userId, args.destinationAddress, args.amount);
+            } else {
+              await this.bot.sendMessage(chatId, "I understood you want to send money, but I need the address and the amount.");
+            }
+            break;
+          default:
+            await this.bot.sendMessage(chatId, "Sorry, I'm not sure how to handle that request.");
+        }
+      } else {
+        // No function call, just a conversational response
+        const response = result.response;
+        const text = response.text();
+        this.bot.sendMessage(chatId, text);
+      }
+    } catch (error) {
+      console.error("Error in AI message handler:", error);
+      this.bot.sendMessage(chatId, "Sorry, I had trouble processing that. Please try rephrasing your request.");
+    }
+  }
+
+
+  // --- Action Execution Methods (callable by both commands and AI) ---
+
+  async _executeBalanceCheck(chatId, userId) {
+    try {
+      const currentNetwork = networkService.getCurrentNetwork().name;
+      const wallet = await supabaseService.getWallet(userId, currentNetwork);
+      if (!wallet) {
+        await this.bot.sendMessage(chatId, "You need a wallet to check your balance. Use /createWallet to get started.");
+        return;
+      }
+      const balance = await this.circleService.getWalletBalance(wallet.walletid);
+      await this.bot.sendMessage(chatId, `Your balance on ${balance.network} is: ${balance.usdc} USDC`);
+    } catch (error) {
+      console.error("Error in _executeBalanceCheck:", error);
+      await this.bot.sendMessage(chatId, "Error getting balance. Try again later.");
+    }
+  }
+
+  async _executeSend(chatId, userId, destinationAddress, amount) {
+    try {
+      const currentNetwork = networkService.getCurrentNetwork().name;
+      const wallet = await supabaseService.getWallet(userId, currentNetwork);
+
+      if (!wallet) {
+        throw new Error(`No wallet found for you on ${currentNetwork}. Please create one first using /createWallet.`);
+      }
+
+      await this.bot.sendMessage(chatId, `Got it. Sending ${amount} USDC to ${destinationAddress} on ${currentNetwork}...`);
+
+      const txResponse = await this.circleService.sendTransaction(
+        wallet.walletid,
+        destinationAddress,
+        amount,
+      );
+
+      const message =
+        `✅ Success! Your transaction has been submitted.\n\n` +
+        `Amount: ${amount} USDC\n` +
+        `To: ${destinationAddress}\n` +
+        `Transaction ID: ${txResponse.id}`;
+
+      await this.bot.sendMessage(chatId, message);
+    } catch (error) {
+      console.error("Error sending transaction:", error);
+      await this.bot.sendMessage(chatId, `❌ Error: ${error.message || "Failed to send transaction."}`);
+    }
+  }
+
+  // --- Original Command Handlers ---
 
   async handleStart(msg) {
     const chatId = msg.chat.id;
-    const message = `Welcome to Circle Wallet Bot!\n\nCommands:\n/createWallet - Create a wallet\n/address - Get wallet address\n/walletId - Get wallet ID\n/balance - Check USDC balance\n/send <address> <amount> - Send USDC\n/network <network> - Switch network\n/networks - List available networks`;
+    const message = `Welcome to RemiFi!\n\nYou can talk to me naturally, like "check my balance" or "send 5 USDC to 0x...".\n\nOr you can use commands:\n/createWallet\n/address\n/balance\n/send <address> <amount>`;
     await this.bot.sendMessage(chatId, message);
   }
 
+  async handleCreateWallet(msg) {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const currentNetwork = networkService.getCurrentNetwork();
+
+    try {
+      await this.circleService.init();
+
+      const existingWallet = await supabaseService.getWallet(userId, currentNetwork.name);
+      if (existingWallet) {
+        await this.bot.sendMessage(
+          chatId,
+          `You already have a wallet on ${currentNetwork.name}!\n` +
+          `Address: ${existingWallet.address}`
+        );
+        return;
+      }
+
+      await this.bot.sendMessage(chatId, `Creating your secure wallet on ${currentNetwork.name}, please wait...`);
+
+      const walletResponse = await this.circleService.createWallet();
+      if (!walletResponse?.walletData?.data?.wallets?.[0]) {
+        throw new Error("Failed to create wallet - invalid response from Circle API");
+      }
+
+      const newWallet = walletResponse.walletData.data.wallets[0];
+      // *** FIX: Use walletResponse.walletId (camelCase) from the service response ***
+      await supabaseService.saveWallet(
+        userId,
+        walletResponse.walletid,
+        newWallet.address,
+        currentNetwork.name
+      );
+
+      await this.bot.sendMessage(
+        chatId,
+        `✅ Your wallet has been created on ${currentNetwork.name}!\nAddress: ${newWallet.address}`
+      );
+    } catch (error) {
+      console.error("Wallet creation error:", error);
+      const errorMessage = error.response?.data?.message || error.message || "Unknown error";
+      await this.bot.sendMessage(chatId, `❌ Error creating wallet: ${errorMessage}`);
+    }
+  }
+  
   async handleNetwork(msg, match) {
     const chatId = msg.chat.id;
     const networkName = match[1].toUpperCase();
@@ -106,93 +271,12 @@ class TelegramService {
     );
   }
 
-  async handleCreateWallet(msg) {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const currentNetwork = networkService.getCurrentNetwork();
-
-    try {
-      await this.circleService.init();
-
-      const existingWallet = await supabaseService.getWallet(userId, currentNetwork.name);
-      if (existingWallet) {
-        await this.bot.sendMessage(
-          chatId,
-          `You already have a wallet on ${currentNetwork.name}!\n` +
-          `Your wallet address: ${existingWallet.address}\n\n` +
-          `Use /network <network-name> to switch networks if you want to create a wallet on another network.`,
-        );
-        return;
-      }
-
-      const walletResponse = await this.circleService.createWallet();
-      if (!walletResponse?.walletData?.data?.wallets?.[0]) {
-        throw new Error(
-          "Failed to create wallet - invalid response from Circle API",
-        );
-      }
-
-      const newWallet = walletResponse.walletData.data.wallets[0];
-      await supabaseService.saveWallet(
-        userId,
-        walletResponse.walletid,
-        newWallet.address,
-        currentNetwork.name
-      );
-
-      await this.bot.sendMessage(
-        chatId,
-        `✅ Wallet created on ${currentNetwork.name}!\nAddress: ${newWallet.address}`,
-      );
-    } catch (error) {
-      console.error("Wallet creation error:", error);
-      const errorMessage =
-        error.response?.data?.message ||
-        error.message ||
-        "Unknown error occurred";
-      await this.bot.sendMessage(
-        chatId,
-        `❌ Error creating wallet: ${errorMessage}\nPlease try again later.`,
-      );
-    }
-  }
-
-  async handleBalance(msg) {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const currentNetwork = networkService.getCurrentNetwork().name;
-
-    try {
-      const wallet = await supabaseService.getWallet(userId, currentNetwork);
-      if (!wallet) {
-        await this.bot.sendMessage(
-          chatId,
-          "Create a wallet first with /createWallet",
-        );
-        return;
-      }
-
-      const balance = await this.circleService.getWalletBalance(wallet.walletid);
-      await this.bot.sendMessage(
-        chatId,
-        `USDC Balance on ${balance.network}: ${balance.usdc} USDC`,
-      );
-    } catch (error) {
-      console.error("Error in handleBalance:", error);
-      await this.bot.sendMessage(
-        chatId,
-        "Error getting balance. Try again later.",
-      );
-    }
-  }
-
   async handleAddress(msg) {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
     const currentNetwork = networkService.getCurrentNetwork().name;
 
     const wallet = await supabaseService.getWallet(userId, currentNetwork);
-    console.log("teleServ wallet from Supabase wallet:", wallet);
     if (!wallet) {
       await this.bot.sendMessage(
         chatId,
@@ -203,7 +287,7 @@ class TelegramService {
 
     await this.bot.sendMessage(
       chatId,
-      `Wallet address on ${currentNetwork}: ${wallet.address}`,
+      `Your wallet address on ${currentNetwork}: ${wallet.address}`,
     );
   }
 
@@ -223,54 +307,8 @@ class TelegramService {
 
     await this.bot.sendMessage(
       chatId,
-      `Wallet ID on ${currentNetwork}: ${wallet.walletid}`,
+      `Your wallet ID on ${currentNetwork}: ${wallet.walletid}`,
     );
-  }
-
-  async handleSend(msg, match) {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    try {
-      const currentNetwork = networkService.getCurrentNetwork().name;
-      const wallet = await supabaseService.getWallet(userId, currentNetwork);
-
-      if (!wallet) {
-        throw new Error(
-          `No wallet found for ${currentNetwork}. Please create a wallet first using /createWallet`,
-        );
-      }
-
-      const params = match[1].split(" ");
-      if (params.length !== 2) {
-        throw new Error("Invalid format. Use: /send <address> <amount>");
-      }
-
-      const [destinationAddress, amount] = params;
-      await this.bot.sendMessage(
-        chatId,
-        `Processing transaction on ${currentNetwork}...`,
-      );
-
-      const txResponse = await this.circleService.sendTransaction(
-        wallet.walletid,
-        destinationAddress,
-        amount,
-      );
-
-      const message =
-        `✅ Transaction submitted on ${currentNetwork}!\n\n` +
-        `Amount: ${amount} USDC\n` +
-        `To: ${destinationAddress}\n` +
-        `Transaction ID: ${txResponse.id}`;
-
-      await this.bot.sendMessage(chatId, message);
-    } catch (error) {
-      console.error("Error sending transaction:", error);
-      await this.bot.sendMessage(
-        chatId,
-        `❌ Error: ${error.message || "Failed to send transaction. Please try again later."}`,
-      );
-    }
   }
 }
 
