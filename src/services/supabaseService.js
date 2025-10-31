@@ -1,9 +1,6 @@
-/*================================================
-FILE: src/services/supabaseService.js
-================================================*/
-
 const { createClient } = require("@supabase/supabase-js");
 const config = require("../config/index.js");
+const networkService = require("./networkService.js");
 
 class SupabaseService {
   constructor() {
@@ -14,6 +11,53 @@ class SupabaseService {
       process.env.SUPABASE_URL,
       process.env.SUPABASE_KEY
     );
+  }
+
+  /**
+   * Creates a user profile if they don't exist, or updates their info if they do.
+   * @param {number} tg_id - The user's Telegram ID.
+   * @param {string} tg_username - The user's Telegram @username.
+   * @param {string} first_name - The user's first name.
+   * @param {string} last_name - The user's last name.
+   * @returns {Promise<Object>} The user's profile data.
+   */
+  async findOrCreateUser(tg_id, tg_username, first_name, last_name) {
+    const { data, error } = await this.supabase
+      .from('users')
+      .upsert({
+        tg_id,
+        tg_username,
+        first_name,
+        last_name
+      }, { onConflict: 'tg_id' }) // Use tg_id to resolve conflicts
+      .select();
+
+    if (error) {
+      console.error("Error in findOrCreateUser:", error);
+      throw new Error(error.message);
+    }
+    return data[0];
+  }
+
+  /**
+   * Finds a user by their Telegram @username.
+   * @param {string} username - The Telegram username to search for.
+   * @returns {Promise<Object|null>} The user's data or null if not found.
+   */
+  async findUserByUsername(username) {
+    const cleanUsername = username.startsWith('@') ? username.substring(1) : username;
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('tg_id')
+      .eq('tg_username', cleanUsername)
+      .single();
+
+    if (error) {
+        if (error.code === 'PGRST116') return null; // 'PGRST116' means no rows found, which is expected.
+        console.error("Error finding user by username:", error);
+        throw new Error(error.message);
+    }
+    return data;
   }
 
   /**
@@ -51,34 +95,77 @@ class SupabaseService {
    * @param {string} network - The network name.
    * @returns {Promise<Object|null>} The wallet data or null if not found.
    */
-  async getWallet(tgId, network) {
-    //console.log("supaServ getting wallet from Supabase:", tg_id, " network:",network);
-    this.recipientId = process.env.TG_ID_RECIPIENT;
-    //const tg_id = this.recipientId; // tgId;
-    const tg_id = tgId;
+  async getWallet(tg_id, network) {
     const { data, error } = await this.supabase
       .from('wallets')
       .select('walletid, walletaddress')
       .eq('tg_id', tg_id)
       .eq('network', network)
-      .single(); // .single() returns one record or null, which is perfect for us.
+      .single(); 
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 means no rows found, which is not an error for us.
+    if (error && error.code !== 'PGRST116') {
       console.error("Error getting wallet from Supabase:", error);
       throw new Error(error.message);
     }
 
-    console.log("supaServ getting wallet from Supabase data:", data);
-
-    // Map database columns to the structure our app expects { walletId, address }
     if (data) {
         return {
             walletid: data.walletid,
             address: data.walletaddress
         };
     }
-
     return null;
+  }
+  
+  /**
+   * Saves a contact relationship to the database.
+   * @param {number} user_tg_id - Telegram ID of the user saving the contact.
+   * @param {string} nickname - The nickname for the contact.
+   * @param {number} contact_tg_id - Telegram ID of the contact being saved.
+   * @returns {Promise<Object>} The saved contact data.
+   */
+  async saveContact(user_tg_id, nickname, contact_tg_id) {
+    // Check if the contact has a wallet, which implies they are a user.
+    const contactWallet = await this.getWallet(contact_tg_id, networkService.getCurrentNetwork().name);
+    if (!contactWallet) {
+        throw new Error("The person you're trying to add doesn't have a RemiFi account yet. Please ask them to start a chat with the bot to get set up! 🚀");
+    }
+
+    const { data, error } = await this.supabase
+      .from('contacts')
+      .insert([{ user_tg_id, nickname, contact_tg_id }])
+      .select();
+      
+    if (error) {
+        if (error.code === '23505') { // Unique constraint violation
+            throw new Error(`You already have a contact named '${nickname}'. Please choose a different name.`);
+        }
+        throw new Error(error.message);
+    }
+    return data[0];
+  }
+  
+  /**
+   * Retrieves a contact's wallet using their nickname.
+   * @param {number} user_tg_id - Telegram ID of the user looking up the contact.
+   * @param {string} nickname - The nickname of the contact.
+   * @param {string} network - The network to get the wallet for.
+   * @returns {Promise<Object|null>} The contact's wallet data or null if not found.
+   */
+  async getContactWallet(user_tg_id, nickname, network) {
+    const { data: contactData, error: contactError } = await this.supabase
+      .from('contacts')
+      .select('contact_tg_id')
+      .eq('user_tg_id', user_tg_id)
+      .eq('nickname', nickname)
+      .single();
+
+    if (contactError || !contactData) {
+        return null; // Contact not found
+    }
+    
+    // Now get the wallet for that contact's telegram ID
+    return this.getWallet(contactData.contact_tg_id, network);
   }
 }
 
