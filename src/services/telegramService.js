@@ -4,13 +4,12 @@ const CircleService = require("./circleService");
 const storageService = require("./storageService");
 const networkService = require("./networkService");
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-import { supabase } from "./supabaseService";
+//import { supabase } from "./supabaseService";
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
 class TelegramService {
   constructor() {
-    console.error("telserv Telegram bot token is missing:", config?.telegram?.botToken);
     if (!config?.telegram?.botToken) {
       throw new Error("Telegram bot token is missing");
     }
