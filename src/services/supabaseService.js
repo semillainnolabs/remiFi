@@ -1,3 +1,7 @@
+/*================================================
+FILE: src/services/supabaseService.js
+================================================*/
+
 const { createClient } = require("@supabase/supabase-js");
 const config = require("../config/index.js");
 
