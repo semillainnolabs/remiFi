@@ -167,6 +167,27 @@ class SupabaseService {
     // Now get the wallet for that contact's telegram ID
     return this.getWallet(contactData.contact_tg_id, network);
   }
+
+  /**
+   * Updates a user's record with their Circle Business API IDs.
+   * @param {number} tg_id - The user's Telegram ID.
+   * @param {object} ids - An object containing the IDs to update.
+   */
+  async updateUserCircleIds(tg_id, { bank_account_id, recipient_address_id }) {
+    const updateData = {};
+    if (bank_account_id) updateData.circle_bank_account_id = bank_account_id;
+    if (recipient_address_id) updateData.circle_recipient_address_id = recipient_address_id;
+
+    const { error } = await this.supabase
+      .from('users')
+      .update(updateData)
+      .eq('tg_id', tg_id);
+
+    if (error) {
+      console.error("Error updating user Circle IDs:", error);
+      throw new Error(error.message);
+    }
+  }
 }
 
 module.exports = new SupabaseService();

@@ -8,6 +8,7 @@ const CircleService = require("./circleService");
 const supabaseService = require("./supabaseService");
 const networkService = require("./networkService");
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const CircleBusinessService = require("./circleBusinessService");
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const geminiModel = process.env.GEMINI_MODEL;
@@ -43,6 +44,17 @@ const tools = [
           },
           "required": ["nickname", "telegram_username"]
         }
+      },
+      {
+        "name": "deposit_money",
+        "description": "Initiates a deposit of USD into the user's account, which will be converted to digital dollars.",
+        "parameters": {
+          "type": "OBJECT",
+          "properties": {
+            "amount": { "type": "STRING", "description": "The amount of USD to deposit (e.g., '50.00')." }
+          },
+          "required": ["amount"]
+        }
       }
     ]
   }
@@ -71,6 +83,9 @@ Your action: call 'send_money' tool with arguments {"recipient": "sister", "amou
 User query: "add @coolfriend as my bestie"
 Your action: call 'add_contact' tool with arguments {"nickname": "bestie", "telegram_username": "@coolfriend"}
 
+User query: "I want to deposit $50"
+Your action: call 'deposit_money' tool with arguments {"amount": "50"}
+
 Always respond in plain text, without markdown, and avoid blockchain words. Feel free to use emojis. 👍`;
 
     const generationConfig = { temperature: 0.3 };
@@ -82,6 +97,9 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
     this.initializeCircleSDK().catch((error) => {
       console.error("Failed to initialize Circle SDK:", error);
     });
+
+    this.circleBusinessService = new CircleBusinessService();
+
     this.setupCommands();
   }
 
@@ -122,6 +140,8 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       case 'add_contact_success':
         prompt = `The user asked to add a contact. I successfully added ${data.nickname} to their contacts list. Congratulate them and let them know they can now send money to this person by name.`;
         break;
+      case 'deposit_money':
+        break;
       default:
         await this.bot.sendMessage(chatId, "All done! 👍");
         return;
@@ -146,7 +166,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       const result = await chat.sendMessage(userText);
       const call = result.response.functionCalls()?.[0];
 
-      console.log("telServ handleNat result.response.text():", result.response.text(), " call:", call);
+      //console.log("telServ handleNat result.response.text():", result.response.text(), " call:", call);
 
       if (call) {
         const { name, args } = call;
@@ -166,6 +186,13 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
               await this._executeAddContact(chatId, userId, args.nickname, args.telegram_username, userText);
             } else {
               await this.bot.sendMessage(chatId, "To add a contact, I need a nickname and their Telegram username (like @username).");
+            }
+            break;
+          case 'deposit_money':
+            if (args.amount) {
+              await this._executeDeposit(chatId, userId, args.amount, userText);
+            } else {
+              await this.bot.sendMessage(chatId, "I can help with that! How much would you like to deposit?");
             }
             break;
           default:
@@ -288,6 +315,39 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
     } catch (error) {
       console.error("Error in _executeBalanceCheck:", error);
       await this.bot.sendMessage(chatId, "Hmm, I couldn't get your balance right now. Please try again in a bit.");
+    }
+  }
+
+  /**
+   * Orchestrates the entire user deposit flow.
+   */
+  async _executeDeposit(chatId, userId, amount, userText = null) {
+    try {
+      await this.bot.sendMessage(chatId, `Got it! Starting a deposit for $${amount}. This is a mock process and might take a minute. I'll let you know when it's done... 🏦`);
+
+      // 1. Get user data from Supabase
+      const user = await supabaseService.findUserByTgId(userId); // You may need to add this simple lookup function to supabaseService
+
+      // 2. Get the user's RemiFi wallet address
+      // IMPORTANT: For the sandbox, this flow *must* use a Sepolia address.
+      // In production, you would adjust the 'chain' parameter.
+      const wallet = await supabaseService.getWallet(userId, "ARC-TESTNET"); // Or whichever testnet you have a wallet on for testing this.
+      if (!wallet) {
+        throw new Error("You need a wallet on the ETH-SEPOLIA network to test this sandbox deposit flow. You can switch networks and create one if needed.");
+      }
+
+      // 3. Execute the 7-step flow in the business service
+      const transferDetails = await this.circleBusinessService.executeMockDepositFlow(user, wallet.address, amount);
+
+      // 4. Send a friendly confirmation
+      const successPrompt = `The user asked to deposit money. The mock wire transfer and crypto payout have been successfully initiated for $${amount}. The transaction ID is ${transferDetails.id}. Please inform the user that the funds are on the way to their account.`;
+      const result = await this.model.generateContent(successPrompt);
+      await this.bot.sendMessage(chatId, result.response.text());
+
+    } catch (error) {
+      console.error("Error executing deposit flow:", error);
+      const errorMessage = error.response?.data?.message || error.message;
+      await this.bot.sendMessage(chatId, `❌ Oh no, something went wrong with the deposit. ${errorMessage}`);
     }
   }
 
