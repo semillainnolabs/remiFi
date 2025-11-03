@@ -4,7 +4,7 @@ const supabaseService = require("./supabaseService");
 
 // NOTE: This service uses the Circle Business Account API, not the W3S SDK.
 const businessApi = axios.create({
-  baseURL: "https://api-sandbox.circle.com/v1/businessAccount",
+  baseURL: "https://api-sandbox.circle.com/v1",
   headers: {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${process.env.CIRCLE_SANDBOX_API_KEY}`,
@@ -24,7 +24,7 @@ class CircleBusinessService {
     }
 
     console.log("Creating a new mock bank account for user:", user.tg_id);
-    const response = await businessApi.post("/banks/wires", {
+    const response = await businessApi.post("/businessAccount/banks/wires", {
       idempotencyKey: uuidv4(),
       accountNumber: "12340010", // Mock data from Circle docs
       routingNumber: "121000248",
@@ -61,15 +61,16 @@ class CircleBusinessService {
 
     console.log("Creating a new recipient address for user:", user.tg_id);
     // IMPORTANT: The sandbox only supports ETH-SEPOLIA for this API.
-    const response = await businessApi.post("/wallets/addresses/recipient", {
+    const response = await businessApi.post("/businessAccount/wallets/addresses/recipient", {
       idempotencyKey: uuidv4(),
-      chain: "ETH", // Per Circle sandbox documentation
+      chain: "BASE", // Per Circle sandbox documentation
       address: userWalletAddress,
       currency: "USD",
       description: `RemiFi user wallet for ${user.tg_username}`,
     });
 
     const recipientId = response.data.data.id;
+    console.log("Recipient address created id:", recipientId);
     await supabaseService.updateUserCircleIds(user.tg_id, { recipient_address_id: recipientId });
     return recipientId;
   }
@@ -83,7 +84,11 @@ class CircleBusinessService {
   async executeMockDepositFlow(user, userWalletAddress, amount) {
     // Step 1 & 2: Get bank account and wire instructions
     const bankAccountId = await this.findOrCreateBankAccount(user);
-    const instructionsResponse = await businessApi.get(`/banks/wires/${bankAccountId}/instructions`);
+    console.log("bank account found id:",bankAccountId);
+    const instructionsResponse = await businessApi.get(`/businessAccount/banks/wires/${bankAccountId}/instructions`);
+    console.log("Checking instructions from API instructionsResponse:",instructionsResponse.data.data);
+    console.log("Checking instructions from API beneficiary:",instructionsResponse.data.data.beneficiary);
+    console.log("Checking instructions from API beneficiaryBank:",instructionsResponse.data.data.beneficiaryBank);
     const beneficiaryAccountNumber = instructionsResponse.data.data.beneficiaryBank.accountNumber;
 
     // Step 3 & 4: Execute mock wire transfer and confirm it's processing
@@ -99,7 +104,7 @@ class CircleBusinessService {
 
     // Step 6 & 7: Transfer the funds from Circle business balance to the user's wallet
     console.log(`Creating crypto transfer to user's wallet.`);
-    const transferResponse = await businessApi.post("/transfers", {
+    const transferResponse = await businessApi.post("/businessAccount/transfers", {
       idempotencyKey: uuidv4(),
       destination: {
         type: "verified_blockchain",
@@ -114,4 +119,4 @@ class CircleBusinessService {
   }
 }
 
-module.exports = new CircleBusinessService();
+module.exports = CircleBusinessService;

@@ -61,6 +61,26 @@ class SupabaseService {
   }
 
   /**
+   * Finds a user's full profile by their Telegram ID.
+   * @param {number} tg_id - The Telegram ID to search for.
+   * @returns {Promise<Object|null>} The user's data or null if not found.
+   */
+  async findUserByTgId(tg_id) {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('*') // Select all columns for the user profile
+      .eq('tg_id', tg_id)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      console.error("Error finding user by tg_id:", error);
+      throw new Error(error.message);
+    }
+    return data;
+  }
+
+  /**
    * Saves a new wallet to the Supabase database.
    * @param {number} tg_id - The user's Telegram ID.
    * @param {string} walletId - The Circle Wallet ID.
