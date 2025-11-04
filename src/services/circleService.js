@@ -6,6 +6,7 @@ const {
 const config = require("../config/index.js");
 const networkService = require("./networkService");
 const CCTP = require("../config/cctp.js");
+const { pad } = require("viem");
 
 /**
  * CircleService class handles all Circle API interactions including wallet management,
@@ -51,7 +52,7 @@ class CircleService {
    * @param {string} userId - Telegram user ID
    * @returns {Promise<Object>} Created wallet information
    */
-  async createWallet() {
+  async createWallets() {
     try {
       // Create a new wallet set
       const walletSetResponse = await this.walletSDK.createWalletSet({
@@ -66,7 +67,40 @@ class CircleService {
       // Create wallet in the wallet set
       const walletData = await this.walletSDK.createWallets({
         idempotencyKey: uuidv4(),
-        blockchains: [currentNetwork.name],
+        blockchains: ["ARC-TESTNET", "BASE-SEPOLIA"],
+        accountType: accountType,
+        walletSetId: walletSetResponse.data?.walletSet?.id ?? "",
+      });
+
+      const walletCount = walletData.data.wallets.length();
+      return { walletCount, walletData };
+    } catch (error) {
+      console.error("Error creating wallet:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new wallet for a user
+   * @param {string} networkName - Circle wallet ID
+   * @returns {Promise<Object>} Created wallet information
+   */
+  async createWallet(networkName = networkService.getCurrentNetwork().name) {
+    try {
+      // Create a new wallet set
+      const walletSetResponse = await this.walletSDK.createWalletSet({
+        name: "WalletSet 1",
+      });
+
+      const currentNetwork = networkService.getCurrentNetwork();
+      const accountType = currentNetwork.name.startsWith("AVAX")
+        ? "EOA"
+        : "SCA";
+
+      // Create wallet in the wallet set
+      const walletData = await this.walletSDK.createWallets({
+        idempotencyKey: uuidv4(),
+        blockchains: [networkName],
         accountType: accountType,
         walletSetId: walletSetResponse.data?.walletSet?.id ?? "",
       });
@@ -179,6 +213,7 @@ class CircleService {
    */
   async crossChainTransfer(
     walletId,
+    sourceNetwork,
     destinationNetwork,
     destinationAddress,
     amount,
@@ -187,11 +222,11 @@ class CircleService {
   ) {
     try {
       await this.init();
-      const currentNetwork = networkService.getCurrentNetwork();
+      //const currentNetwork = networkService.getCurrentNetwork();
 
       const usdcAmount = BigInt(amount) * BigInt(10 ** 6);
 
-      const sourceConfig = CCTP.contracts[currentNetwork.name];
+      const sourceConfig = CCTP.contracts[sourceNetwork];
 
       // 1. Approve USDC transfer
       await this.bot.sendMessage(
@@ -225,22 +260,26 @@ class CircleService {
         const statusResponse = await this.walletSDK.getTransaction({
           id: approveTxResponse.data.id,
         });
+        console.log("Approve transaction LOOP response:", approveTxResponse.data);
         approveTxStatus = statusResponse.data.transaction.state;
         if (approveTxStatus === "FAILED") {
           throw new Error("Approve transaction failed");
         }
-        if (approveTxStatus !== "CONFIRMED") {
+        if (approveTxStatus !== "COMPLETE") {
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
-      } while (approveTxStatus !== "CONFIRMED");
+      } while (approveTxStatus !== "COMPLETE");
 
-      console.log("approve txn", approveTxStatus);
+      console.log("approve txn", approveTxStatus)
+      //await new Promise((resolve) => setTimeout(resolve, 2000));
 
       await this.bot.sendMessage(
         chatId,
         `✅ Approval transaction confirmed: ${approveTxResponse.data.id}`,
       );
+       
 
+      
       // 2. Create burn transaction
       await this.bot.sendMessage(chatId, "Step 2/4: Initiating USDC burn...");
 
@@ -284,14 +323,18 @@ class CircleService {
         statusResponse = await this.walletSDK.getTransaction({
           id: burnTxResponse.data.id,
         });
+        console.log("Burn transaction2 response:", statusResponse.data.transaction);
         burnTxStatus = statusResponse.data.transaction.state;
         if (burnTxStatus === "FAILED") {
           throw new Error("Burn transaction failed");
         }
-        if (burnTxStatus !== "CONFIRMED") {
+        if (burnTxStatus !== "COMPLETE") {
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
-      } while (burnTxStatus !== "CONFIRMED");
+      } while (burnTxStatus !== "COMPLETE");
+       
+
+      //await new Promise((resolve) => setTimeout(resolve, 5000));
 
       await this.bot.sendMessage(
         chatId,
@@ -306,7 +349,7 @@ class CircleService {
 
       // Get transaction hash from status response
       const txHash = statusResponse.data.transaction.txHash;
-      const srcDomainId = CCTP.domains[currentNetwork.name];
+      const srcDomainId = CCTP.domains[sourceNetwork];
 
       // Wait 30 seconds before starting to poll for attestation
       await new Promise((resolve) => setTimeout(resolve, 2000));

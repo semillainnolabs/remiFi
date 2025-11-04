@@ -400,7 +400,6 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       }
 
       const [destinationNetwork, destinationAddress, amount] = params;
-
       await this.bot.sendMessage(chatId, "Initiating cross-chain transfer...");
       const userWallet = wallet;//wallet[currentNetwork.name];
       if (!userWallet) {
@@ -412,22 +411,41 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       }
 
       // ARC and BASE have the same wallet address 
-      const destinationWallet = wallet;//wallet[destinationNetwork.toUpperCase()];
+      /*const destinationWallet = wallet;//wallet[destinationNetwork.toUpperCase()];
       if (!destinationWallet) {
         await this.bot.sendMessage(
           chatId,
           `No wallet found for ${destinationNetwork}. Create one first with /createWallet`,
         );
         return;
+      }*/
+      const destinationWallet = await supabaseService.getWallet(userId, destinationNetwork.toUpperCase());
+      if (destinationWallet) {
+        await this.bot.sendMessage(chatId, `Wallet on destination network found!`);
+      } else {
+        await this.bot.sendMessage(chatId, `I'm creating your secure digital dollar account now at ${destinationNetwork}. This will just take a moment... 🛠️`);
+
+        const walletResponse = await this.circleService.createWallet(destinationNetwork.toUpperCase());
+        if (!walletResponse?.walletData?.data?.wallets?.[0]) {
+          throw new Error("I couldn't get a valid response from Circle to create the wallet.");
+        }
+        const newWallet = walletResponse.walletData.data.wallets[0];
+        await supabaseService.saveWallet(userId, walletResponse.walletId, newWallet.address, destinationNetwork.toUpperCase());
+
+        destinationWallet.walletid = walletResponse.walletid;
+        destinationWallet.address = walletResponse.newWallet.address;
+
+        await this.bot.sendMessage(chatId, `✅ Wallet created for destination network with id:${walletResponse.walletid}`);
       }
 
       const result = await this.circleService.crossChainTransfer(
-        userWallet.walletId,
+        userWallet.walletid,
+        "ARC-TESTNET",
         destinationNetwork.toUpperCase(),
-        destinationAddress,
+        destinationWallet.address,
         amount,
         chatId,
-        destinationWallet.walletId,
+        destinationWallet.walletid,
       );
 
       const message =
