@@ -125,6 +125,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       this._executeSend(msg.chat.id, msg.from.id, destinationAddress, amount);
     });
     this.bot.onText(/\/address/, this.handleAddress.bind(this));
+    this.bot.onText(/\/cctp (.+)/, this.handleCCTP.bind(this));
     this.bot.on('message', this.handleNaturalLanguage.bind(this));
   }
 
@@ -366,6 +367,88 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       return;
     }
     await this.bot.sendMessage(chatId, `Your wallet address on ${currentNetwork} is: ${wallet.address}`);
+  }
+
+  async handleCCTP(msg, match) {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id.toString();
+
+    try {
+      /*const wallet = storageService.getWallet(userId);
+      if (!wallet) {
+        await this.bot.sendMessage(
+          chatId,
+          "Create a wallet first with /createWallet",
+        );
+        return;
+      }*/
+
+      const currentNetwork = networkService.getCurrentNetwork().name;
+      const wallet = await supabaseService.getWallet(userId, currentNetwork);
+      if (!wallet) {
+        await this.bot.sendMessage(chatId, `No wallet found for ${currentNetwork}. Say /start to create one.`);
+        return;
+      }
+
+      const params = match[1].split(" ");
+      if (params.length !== 3) {
+        await this.bot.sendMessage(
+          chatId,
+          "Invalid format. Use: /cctp <destination-network> <address> <amount>",
+        );
+        return;
+      }
+
+      const [destinationNetwork, destinationAddress, amount] = params;
+
+      await this.bot.sendMessage(chatId, "Initiating cross-chain transfer...");
+      const userWallet = wallet;//wallet[currentNetwork.name];
+      if (!userWallet) {
+        await this.bot.sendMessage(
+          chatId,
+          `No wallet found for ${currentNetwork}. Create one first with /createWallet`,
+        );
+        return;
+      }
+
+      // ARC and BASE have the same wallet address 
+      const destinationWallet = wallet;//wallet[destinationNetwork.toUpperCase()];
+      if (!destinationWallet) {
+        await this.bot.sendMessage(
+          chatId,
+          `No wallet found for ${destinationNetwork}. Create one first with /createWallet`,
+        );
+        return;
+      }
+
+      const result = await this.circleService.crossChainTransfer(
+        userWallet.walletId,
+        destinationNetwork.toUpperCase(),
+        destinationAddress,
+        amount,
+        chatId,
+        destinationWallet.walletId,
+      );
+
+      const message =
+        `✅ Cross-chain transfer initiated!\n\n` +
+        `From: ${currentNetwork.name}\n` +
+        `To: ${destinationNetwork}\n` +
+        `Amount: ${amount} USDC\n` +
+        `Recipient: ${destinationAddress}\n\n` +
+        `Transactions:\n` +
+        `Approve: ${result.approveTx}\n` +
+        `Burn: ${result.burnTx}\n` +
+        `Receive: ${result.receiveTx}`;
+
+      await this.bot.sendMessage(chatId, message);
+    } catch (error) {
+      console.error("Error in CCTP transfer:", error);
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Error: ${error.message || "Failed to execute cross-chain transfer"}`,
+      );
+    }
   }
 }
 
