@@ -36,7 +36,7 @@ const CCTP_CONFIG = {
       tokenMessenger: "0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa",
       messageTransmitter: "0xe737e5cebeeba77efe34d4aa090756590b1ce275",
       tokenMinter: "0xb43db544e2c27092c107639ad201b3defabcf192",
-      usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7c",
+      usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     },
   },
 };

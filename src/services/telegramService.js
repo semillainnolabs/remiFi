@@ -224,7 +224,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       const existingWallet = await supabaseService.getWallet(userId, currentNetwork.name);
 
       if (existingWallet) {
-        await this.bot.sendMessage(chatId, `Looks like you're all set! Your digital dollar account is active. You can start by asking me to "check my balance" or "add @username as a contact".`);
+        await this.bot.sendMessage(chatId, `Looks like you're all set! Your digital dollar account is active. You can start by asking me things like:\n\n"check my balance", for getting your balance in digital dollars.\n\n"add @username as Mom", for adding a recipient using their Telegram's username.\n\n"send $10 to my Mom", to send money to one of the recipients you added previously if you have enough balance.\n\n"deposit $15", if you need to deposit digital dollars in your account from your bank (with a wire transfer).`);
       } else {
         await this.bot.sendMessage(chatId, `I'm creating your secure digital dollar account now. This will just take a moment... 🛠️`);
 
@@ -320,35 +320,53 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
   }
 
   /**
-   * Orchestrates the entire user deposit flow.
+   * Orchestrates the entire user deposit and bridge flow.
    */
   async _executeDeposit(chatId, userId, amount, userText = null) {
     try {
-      await this.bot.sendMessage(chatId, `Got it! Starting a deposit for $${amount}. This is a mock process and might take a minute. I'll let you know when it's done... 🏦`);
+      await this.bot.sendMessage(chatId, `Got it! I'll start the process to deposit $${amount} into your account. This involves a few steps, so I'll keep you updated. 👍`);
 
       // 1. Get user data from Supabase
-      const user = await supabaseService.findUserByTgId(userId); // You may need to add this simple lookup function to supabaseService
+      const user = await supabaseService.findUserByTgId(userId);
+      if (!user) throw new Error("I couldn't find your user profile.");
 
-      // 2. Get the user's RemiFi wallet address
-      // IMPORTANT: For the sandbox, this flow *must* use a Sepolia address.
-      // In production, you would adjust the 'chain' parameter.
-      const wallet = await supabaseService.getWallet(userId, "ARC-TESTNET"); // Or whichever testnet you have a wallet on for testing this.
-      if (!wallet) {
-        throw new Error("You need a wallet on the ETH-SEPOLIA network to test this sandbox deposit flow. You can switch networks and create one if needed.");
+      // 2. Get the final destination wallet on Arc Testnet
+      const destinationWallet = await supabaseService.getWallet(userId, "ARC-TESTNET");
+      if (!destinationWallet) {
+        throw new Error("I couldn't find your main account wallet. Please try running /start again to make sure everything is set up correctly.");
+      }
+      
+      // 3. Get (or create) the temporary source wallet on Base Sepolia for the deposit
+      let sourceWallet = await supabaseService.getWallet(userId, "BASE-SEPOLIA");
+      if (!sourceWallet) {
+        await this.bot.sendMessage(chatId, "Looks like we need a temporary spot to receive your deposit before moving it. Setting that up for you now...");
+        const walletResponse = await this.circleService.createWallet("BASE-SEPOLIA");
+        const newWallet = walletResponse.walletData.data.wallets[0];
+        await supabaseService.saveWallet(userId, walletResponse.walletid, newWallet.address, "BASE-SEPOLIA");
+        sourceWallet = { walletid: walletResponse.walletid, address: newWallet.address };
+        await this.bot.sendMessage(chatId, "Okay, the temporary spot is ready!");
       }
 
-      // 3. Execute the 7-step flow in the business service
-      const transferDetails = await this.circleBusinessService.executeMockDepositFlow(user, wallet.address, amount);
+      // 4. Execute the new, enhanced flow in the business service
+      const finalResult = await this.circleBusinessService.executeMockDepositFlow(
+        user,
+        amount,
+        sourceWallet,
+        destinationWallet,
+        this.circleService, // Pass the circleService instance for bridging
+        this.bot,
+        chatId
+      );
 
-      // 4. Send a friendly confirmation
-      const successPrompt = `The user asked to deposit money. The mock wire transfer and crypto payout have been successfully initiated for $${amount}. The transaction ID is ${transferDetails.id}. Please inform the user that the funds are on the way to their account.`;
+      // 5. Send a final friendly confirmation
+      const successPrompt = `The user asked to deposit money. I have just completed the entire mock deposit and bridge process for $${amount}. The funds are now in their main account. Please craft a final, super friendly and reassuring message confirming that everything is complete and the money is in their account and ready to use.`;
       const result = await this.model.generateContent(successPrompt);
       await this.bot.sendMessage(chatId, result.response.text());
 
     } catch (error) {
       console.error("Error executing deposit flow:", error);
       const errorMessage = error.response?.data?.message || error.message;
-      await this.bot.sendMessage(chatId, `❌ Oh no, something went wrong with the deposit. ${errorMessage}`);
+      await this.bot.sendMessage(chatId, `❌ Oh no, something went wrong during the deposit. Here's the issue: ${errorMessage}`);
     }
   }
 

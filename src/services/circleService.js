@@ -132,8 +132,8 @@ class CircleService {
 
       const balances = response.data.data.tokenBalances;
       const networkTokenId = network.usdcTokenId;
-      console.log("Checking balance for token ID:", networkTokenId);
-      console.log("Available balances:", balances);
+      //console.log("Checking balance for token ID:", networkTokenId);
+      //console.log("Available balances:", balances);
 
       const usdcBalance =
         balances.find((b) => b.token.id === networkTokenId)?.amount || "0";
@@ -224,7 +224,7 @@ class CircleService {
       await this.init();
       //const currentNetwork = networkService.getCurrentNetwork();
 
-      const usdcAmount = BigInt(amount) * BigInt(10 ** 6);
+      const usdcAmount = BigInt(Number(amount) * 10 ** 6);
 
       const sourceConfig = CCTP.contracts[sourceNetwork];
 
@@ -236,6 +236,8 @@ class CircleService {
 
       const entitySecretCiphertext =
         await this.walletSDK.generateEntitySecretCiphertext();
+
+      //console.log("circSer cctp walletId:",walletId," usdcAmount:",usdcAmount.toString()," sourceConfig:",sourceConfig);
 
       const approveTxResponse =
         await this.walletSDK.createContractExecutionTransaction({
@@ -252,7 +254,7 @@ class CircleService {
           },
         });
 
-      console.log("Approve transaction response:", approveTxResponse.data);
+      //console.log("Approve transaction response:", approveTxResponse.data);
 
       // Wait for transaction to be confirmed
       let approveTxStatus;
@@ -260,18 +262,18 @@ class CircleService {
         const statusResponse = await this.walletSDK.getTransaction({
           id: approveTxResponse.data.id,
         });
-        console.log("Approve transaction LOOP response:", approveTxResponse.data);
+        
         approveTxStatus = statusResponse.data.transaction.state;
+        //console.log("Approve transaction status:", approveTxStatus);
         if (approveTxStatus === "FAILED") {
           throw new Error("Approve transaction failed");
         }
-        if (approveTxStatus !== "COMPLETE") {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (approveTxStatus !== "CONFIRMED" && approveTxStatus !== "COMPLETE" ) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
         }
-      } while (approveTxStatus !== "COMPLETE");
+      } while (approveTxStatus !== "COMPLETE" && approveTxStatus !== "CONFIRMED");
 
-      console.log("approve txn", approveTxStatus)
-      //await new Promise((resolve) => setTimeout(resolve, 2000));
+      //console.log("approve txn", approveTxStatus)
 
       await this.bot.sendMessage(
         chatId,
@@ -314,7 +316,7 @@ class CircleService {
           },
         });
 
-      console.log("Burn transaction response:", burnTxResponse);
+      //console.log("Burn transaction response:", burnTxResponse.data);
 
       // Wait for transaction to be confirmed
       let burnTxStatus;
@@ -323,15 +325,16 @@ class CircleService {
         statusResponse = await this.walletSDK.getTransaction({
           id: burnTxResponse.data.id,
         });
-        console.log("Burn transaction2 response:", statusResponse.data.transaction);
+        
         burnTxStatus = statusResponse.data.transaction.state;
+        //console.log("Burn transaction status:", burnTxStatus);
         if (burnTxStatus === "FAILED") {
           throw new Error("Burn transaction failed");
         }
-        if (burnTxStatus !== "COMPLETE") {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (burnTxStatus !== "CONFIRMED" && burnTxStatus !== "COMPLETE") {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
         }
-      } while (burnTxStatus !== "COMPLETE");
+      } while (burnTxStatus !== "CONFIRMED" && burnTxStatus !== "COMPLETE");
        
 
       //await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -364,7 +367,7 @@ class CircleService {
       // 4. Receive on destination chain
       await this.bot.sendMessage(
         chatId,
-        "Step 4/4: Finalizing transfer on destination chain...",
+        "Step 4/4: Finalizing transfer to your account...",
       );
       const destinationConfig = CCTP.contracts[destinationNetwork];
 
@@ -387,7 +390,7 @@ class CircleService {
           },
         });
 
-      console.log("Receive transaction response:", receiveTxResponse.data);
+      //console.log("Receive transaction response:", receiveTxResponse.data);
 
       // Wait for transaction to be confirmed
       let receiveTxStatus;
@@ -396,14 +399,14 @@ class CircleService {
           id: receiveTxResponse.data.id,
         });
         receiveTxStatus = statusResponse.data.transaction.state;
-        console.log("Receive transaction status:", receiveTxStatus);
+        //console.log("Receive transaction status:", receiveTxStatus);
         if (receiveTxStatus === "FAILED") {
           throw new Error("Receive transaction failed");
         }
-        if (receiveTxStatus !== "CONFIRMED") {
+        if (receiveTxStatus !== "CONFIRMED" && receiveTxStatus !== "COMPLETE") {
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
-      } while (receiveTxStatus !== "CONFIRMED");
+      } while (receiveTxStatus !== "CONFIRMED" && receiveTxStatus !== "COMPLETE");
 
       await this.bot.sendMessage(
         chatId,
@@ -444,8 +447,8 @@ class CircleService {
             },
           });
 
-          console.log("Attestation response:", response.data);
-          console.log("attestation response without", response);
+          //console.log("Attestation response:", response.data);
+          //console.log("attestation response without", response);
 
           if (response.data?.messages?.[0]?.status === "complete") {
             const { message, attestation } = response.data?.messages[0];

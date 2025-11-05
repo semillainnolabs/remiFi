@@ -63,7 +63,7 @@ class CircleBusinessService {
     // IMPORTANT: The sandbox only supports ETH-SEPOLIA for this API.
     const response = await businessApi.post("/businessAccount/wallets/addresses/recipient", {
       idempotencyKey: uuidv4(),
-      chain: "BASE", // Per Circle sandbox documentation
+      chain: "BASE", // The Business API deposits to BASE-SEPOLIA in sandbox
       address: userWalletAddress,
       currency: "USD",
       description: `RemiFi user wallet for ${user.tg_username}`,
@@ -76,46 +76,63 @@ class CircleBusinessService {
   }
 
   /**
-   * Executes the full mock deposit flow.
-   * @param {object} user - The user object from Supabase.
-   * @param {string} userWalletAddress - The user's RemiFi wallet address.
+   * Executes the full mock deposit and bridge flow.
+   * @param {object} user - The user's Supabase profile.
    * @param {string} amount - The amount to deposit.
+   * @param {object} sourceWallet - The user's wallet on BASE-SEPOLIA.
+   * @param {object} destinationWallet - The user's wallet on ARC-TESTNET.
+   * @param {CircleService} circleService - The instance of CircleService for bridging.
+   * @param {TelegramBot} bot - The Telegram bot instance for sending messages.
+   * @param {number} chatId - The chat ID to send updates to.
    */
-  async executeMockDepositFlow(user, userWalletAddress, amount) {
+  async executeMockDepositFlow(user, amount, sourceWallet, destinationWallet, circleService, bot, chatId) {
     // Step 1 & 2: Get bank account and wire instructions
+    bot.sendMessage(chatId, "Okay, I'm connecting to the bank now... 🏦");
     const bankAccountId = await this.findOrCreateBankAccount(user);
-    console.log("bank account found id:",bankAccountId);
     const instructionsResponse = await businessApi.get(`/businessAccount/banks/wires/${bankAccountId}/instructions`);
-    console.log("Checking instructions from API instructionsResponse:",instructionsResponse.data.data);
-    console.log("Checking instructions from API beneficiary:",instructionsResponse.data.data.beneficiary);
-    console.log("Checking instructions from API beneficiaryBank:",instructionsResponse.data.data.beneficiaryBank);
     const beneficiaryAccountNumber = instructionsResponse.data.data.beneficiaryBank.accountNumber;
 
-    // Step 3 & 4: Execute mock wire transfer and confirm it's processing
-    console.log(`Submitting mock wire deposit for ${amount} USD.`);
+    // Step 3: Transfer instructions for real transfers
+    bot.sendMessage(chatId, `For real bank deposits you would need to make a wire transfer with the following details:\n Name: ${instructionsResponse.data.data.beneficiary.name}\nBank: ${instructionsResponse.data.data.beneficiaryBank.name}\nAccount #: ${instructionsResponse.data.data.beneficiaryBank.accountNumber}\nRouting #: ${instructionsResponse.data.data.beneficiaryBank.routingNumber}\n\nBut for testing puroposes we are going to mock the transfer.`);
+
+    // Step 4: Execute mock wire transfer
+    bot.sendMessage(chatId, "Submitting your deposit request now!");
     await businessApi.post("/mocks/payments/wire", {
       amount: { amount, currency: "USD" },
       beneficiaryBank: { accountNumber: beneficiaryAccountNumber },
     });
-    // Note: In a real app, you'd poll the /deposits endpoint. For this flow, we assume it will succeed.
 
-    // Step 5: Add user's wallet as an approved recipient
-    const recipientAddressId = await this.findOrCreateRecipientAddress(user, userWalletAddress);
+    // Step 5: Add user's Base Sepolia wallet as an approved recipient for the deposit
+    const recipientAddressId = await this.findOrCreateRecipientAddress(user, sourceWallet.address);
 
-    // Step 6 & 7: Transfer the funds from Circle business balance to the user's wallet
-    console.log(`Creating crypto transfer to user's wallet.`);
+    // Step 6 & 7: Transfer the funds from Circle business balance to the user's Base Sepolia wallet
+    bot.sendMessage(chatId, "Your deposit is being processed by the bank. I'll move the funds to your account as soon as they arrive.");
     const transferResponse = await businessApi.post("/businessAccount/transfers", {
       idempotencyKey: uuidv4(),
-      destination: {
-        type: "verified_blockchain",
-        addressId: recipientAddressId,
-      },
+      destination: { type: "verified_blockchain", addressId: recipientAddressId },
       amount: { currency: "USD", amount },
     });
 
-    // In a real app, you'd poll this transfer ID for completion.
-    // For now, we return the initiated transfer data.
-    return transferResponse.data.data;
+    // Simulate waiting for the deposit and transfer to complete
+    await new Promise(resolve => setTimeout(resolve, 5000)); // 15-second delay for simulation
+    
+    await bot.sendMessage(chatId, `Awesome, your $${amount} have arrived!!`);
+    await bot.sendMessage(chatId, `Now, I'm moving them to your main RemiFi account on Arc(from Base). This involves some magic called a 'bridge'... 🌉`);
+
+    // FINAL STEP: Bridge the funds from Base Sepolia to Arc Testnet
+    const bridgeResult = await circleService.crossChainTransfer(
+      sourceWallet.walletid,
+      "BASE-SEPOLIA",
+      "ARC-TESTNET",
+      destinationWallet.address,
+      amount,
+      chatId,
+      destinationWallet.walletid,
+    );
+
+    await bot.sendMessage(chatId, `All done! Your $${amount} are now safely in your main account. ✨`);
+    
+    return bridgeResult;
   }
 }
 
