@@ -33,7 +33,7 @@ class SupabaseService {
       .select();
 
     if (error) {
-      console.error("Error in findOrCreateUser:", error);
+      //console.error("Error in findOrCreateUser:", error);
       throw new Error(error.message);
     }
     return data[0];
@@ -54,7 +54,7 @@ class SupabaseService {
 
     if (error) {
         if (error.code === 'PGRST116') return null; // 'PGRST116' means no rows found, which is expected.
-        console.error("Error finding user by username:", error);
+        //console.error("Error finding user by username:", error);
         throw new Error(error.message);
     }
     return data;
@@ -74,7 +74,7 @@ class SupabaseService {
 
     if (error) {
       if (error.code === 'PGRST116') return null; // Not found
-      console.error("Error finding user by tg_id:", error);
+      //console.error("Error finding user by tg_id:", error);
       throw new Error(error.message);
     }
     return data;
@@ -102,7 +102,7 @@ class SupabaseService {
       .select();
 
     if (error) {
-      console.error("Error saving wallet to Supabase:", error);
+      //console.error("Error saving wallet to Supabase:", error);
       throw new Error(error.message);
     }
 
@@ -124,7 +124,7 @@ class SupabaseService {
       .single(); 
 
     if (error && error.code !== 'PGRST116') {
-      console.error("Error getting wallet from Supabase:", error);
+      //console.error("Error getting wallet from Supabase:", error);
       throw new Error(error.message);
     }
 
@@ -204,7 +204,7 @@ class SupabaseService {
       .eq('tg_id', tg_id);
 
     if (error) {
-      console.error("Error updating user Circle IDs:", error);
+      //console.error("Error updating user Circle IDs:", error);
       throw new Error(error.message);
     }
   }

@@ -107,7 +107,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
     try {
       await this.circleService.init();
     } catch (error) {
-      console.error("Error initializing Circle SDK:", error);
+      //console.error("Error initializing Circle SDK:", error);
     }
   }
 
@@ -151,7 +151,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       const result = await this.model.generateContent(prompt);
       await this.bot.sendMessage(chatId, result.response.text());
     } catch (error) {
-      console.error("Error generating friendly response:", error);
+      //console.error("Error generating friendly response:", error);
       await this.bot.sendMessage(chatId, `Action completed successfully!`);
     }
   }
@@ -204,7 +204,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
         this.bot.sendMessage(chatId, text);
       }
     } catch (error) {
-      console.error("Error in AI message handler:", error);
+      //console.error("Error in AI message handler:", error);
       this.bot.sendMessage(chatId, "Oh no, something went wrong on my end. Could you please try rephrasing your request?");
     }
   }
@@ -218,27 +218,43 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       const userId = tgId;
       await this.bot.sendMessage(chatId, `Hey ${first_name}, welcome to RemiFi! 💸 Let me get things set up for you...`);
       await supabaseService.findOrCreateUser(userId, username, first_name, last_name);
-      //await supabaseService.findOrCreateUser(userId, "maryperez21", "Maria", "Perez");
 
       const currentNetwork = networkService.getCurrentNetwork();
       const existingWallet = await supabaseService.getWallet(userId, currentNetwork.name);
 
       if (existingWallet) {
-        await this.bot.sendMessage(chatId, `Looks like you're all set! Your digital dollar account is active. You can start by asking me things like:\n\n"check my balance", for getting your balance in digital dollars.\n\n"add @username as Mom", for adding a recipient using their Telegram's username.\n\n"send $10 to my Mom", to send money to one of the recipients you added previously if you have enough balance.\n\n"deposit $15", if you need to deposit digital dollars in your account from your bank (with a wire transfer).`);
+        await this.bot.sendMessage(chatId, `Looks like you're all set! Your account is ready. Now you can start by asking me things like:\n\n"check my balance", for getting your balance in digital dollars.\n\n"add @username as Mom", for adding a recipient using their Telegram's username.\n\n"send $10 to my Mom", to send money to one of the recipients you added previously if you have enough balance.\n\n"deposit $15", if you need to deposit digital dollars in your account from your bank (with a wire transfer).`);
       } else {
         await this.bot.sendMessage(chatId, `I'm creating your secure digital dollar account now. This will just take a moment... 🛠️`);
 
-        const walletResponse = await this.circleService.createWallet();
-        if (!walletResponse?.walletData?.data?.wallets?.[0]) {
+        // Creating wallets in Arc and Base
+        const walletResponse = await this.circleService.createWallets();
+        if (walletResponse?.walletCount == 0) {
           throw new Error("I couldn't get a valid response from Circle to create the wallet.");
         }
-        const newWallet = walletResponse.walletData.data.wallets[0];
-        await supabaseService.saveWallet(userId, walletResponse.walletid, newWallet.address, currentNetwork.name);
 
-        await this.bot.sendMessage(chatId, `✅ All done! Your account is ready.\n\nYou can now add contacts and send money just by using their Telegram username. Try asking me: "add @username as Mom" 👍`);
+        // Saving Arc and Base wallets in db
+        const newWalletArc = walletResponse.walletData.data.wallets[0];
+        await supabaseService.saveWallet(userId, newWalletArc.id, newWalletArc.address, newWalletArc.blockchain);
+        const newWalletBase = walletResponse.walletData.data.wallets[1];
+        await supabaseService.saveWallet(userId, newWalletBase.id, newWalletBase.address, newWalletBase.blockchain);
+
+        // Creating Bank account and recipient for onramp flow
+        if (newWalletBase.blockchain.toUpperCase() == "BASE-SEPOLIA") {
+          const user = await supabaseService.findUserByTgId(userId);
+          const bankAccountId = await this.circleBusinessService.findOrCreateBankAccount(user, this.bot, chatId);
+
+          // Add user's Base Sepolia wallet as an approved recipient for the deposit
+          await this.bot.sendMessage(chatId, `Now adding your wallet address to the Onramp system so you can buy digital dollars..`);
+          const recipientAddressId = await this.circleBusinessService.findOrCreateRecipientAddress(user, newWalletBase.address);
+          await this.bot.sendMessage(chatId, `Wallet address added to the Onramp system 👍!!!`);
+
+        }
+
+        await this.bot.sendMessage(chatId, `✅ All done! Your account is ready 👍. Now you can start by asking me things like:\n\n"check my balance", for getting your balance in digital dollars.\n\n"add @username as Mom", for adding a recipient using their Telegram's username.\n\n"send $10 to my Mom", to send money to one of the recipients you added previously if you have enough balance.\n\n"deposit $15", if you need to deposit digital dollars in your account from your bank (with a wire transfer).`);
       }
     } catch (error) {
-      console.error("Error during handleStart onboarding:", error);
+      //console.error("Error during handleStart onboarding:", error);
       await this.bot.sendMessage(chatId, `❌ Whoops, I ran into a little trouble setting things up. ${error.message}`);
     }
   }
@@ -247,7 +263,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
     try {
       const contactUser = await supabaseService.findUserByUsername(username);
       if (!contactUser) {
-        throw new Error(`I couldn't find anyone with the username ${username}. Please make sure they have started a conversation with me first!`);
+        throw new Error(`I couldn't find anyone with the Telegram username ${username} in my database. Please make sure they have started a conversation with me first. Tell them to open this link to create their RemiFi account:\nhttps://t.me/remiFiBot`);
       }
 
       await supabaseService.saveContact(userId, nickname.toLowerCase(), contactUser.tg_id);
@@ -258,7 +274,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
         await this.bot.sendMessage(chatId, `Success! I've added ${nickname} (${username}) to your contacts. 👍`);
       }
     } catch (error) {
-      console.error("Error adding contact:", error);
+      //console.error("Error adding contact:", error);
       await this.bot.sendMessage(chatId, `❌ Oh no, I couldn't add that contact. ${error.message}`);
     }
   }
@@ -269,18 +285,21 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       const senderWallet = await supabaseService.getWallet(userId, currentNetwork);
       if (!senderWallet) throw new Error(`You need a wallet to send money. Use /createWallet to get started!`);
 
+      const balance = await this.circleService.getWalletBalance(senderWallet.walletid);
+      if (!balance.usdc || Number(amount) > Number(balance.usdc)) throw new Error(`Not enough balance of digital dollars in your wallet. Please make a deposit first!\n\nAlternatively, for testing purposes, you can get USDC from the Circle faucet(https://faucet.circle.com/), your wallet address in Arc-Testnet is:\n\n${senderWallet.address}`);
+
       let destinationAddress;
       if (recipient.startsWith('0x') && recipient.length === 42) {
         destinationAddress = recipient;
       } else {
         const contactWallet = await supabaseService.getContactWallet(userId, recipient.toLowerCase(), currentNetwork);
         if (!contactWallet) {
-          throw new Error(`I couldn't find a contact named '${recipient}'. Please check the name or add them as a contact first saying somethin like 'add @neat${recipient}25 as my ${recipient}'`);
+          throw new Error(`I couldn't find a contact named '${recipient}'. Please check the name is right or first add them as a contact saying something like 'add @username as ${recipient}' where username is their Telegram's username.`);
         }
         destinationAddress = contactWallet.address;
       }
 
-      console.log("telServ exSend recipient:", recipient, " destinationAddress:", destinationAddress);
+      //console.log("telServ exSend recipient:", recipient, " destinationAddress:", destinationAddress);
 
       await this.bot.sendMessage(chatId, `Got it. Sending $${amount} to ${recipient}... 💸`);
       const txResponse = await this.circleService.sendTransaction(senderWallet.walletid, destinationAddress, amount);
@@ -294,7 +313,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
         await this.bot.sendMessage(chatId, message);
       }
     } catch (error) {
-      console.error("Error sending transaction:", error);
+      //console.error("Error sending transaction:", error);
       await this.bot.sendMessage(chatId, `❌ Oh no, something went wrong. ${error.message}`);
     }
   }
@@ -314,7 +333,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
         await this.bot.sendMessage(chatId, `Your balance is: $${balance.usdc}`);
       }
     } catch (error) {
-      console.error("Error in _executeBalanceCheck:", error);
+      //console.error("Error in _executeBalanceCheck:", error);
       await this.bot.sendMessage(chatId, "Hmm, I couldn't get your balance right now. Please try again in a bit.");
     }
   }
@@ -335,7 +354,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       if (!destinationWallet) {
         throw new Error("I couldn't find your main account wallet. Please try running /start again to make sure everything is set up correctly.");
       }
-      
+
       // 3. Get (or create) the temporary source wallet on Base Sepolia for the deposit
       let sourceWallet = await supabaseService.getWallet(userId, "BASE-SEPOLIA");
       if (!sourceWallet) {
@@ -364,7 +383,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       await this.bot.sendMessage(chatId, result.response.text());
 
     } catch (error) {
-      console.error("Error executing deposit flow:", error);
+      //console.error("Error executing deposit flow:", error);
       const errorMessage = error.response?.data?.message || error.message;
       await this.bot.sendMessage(chatId, `❌ Oh no, something went wrong during the deposit. Here's the issue: ${errorMessage}`);
     }
@@ -479,7 +498,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
 
       await this.bot.sendMessage(chatId, message);
     } catch (error) {
-      console.error("Error in CCTP transfer:", error);
+      //console.error("Error in CCTP transfer:", error);
       await this.bot.sendMessage(
         chatId,
         `❌ Error: ${error.message || "Failed to execute cross-chain transfer"}`,

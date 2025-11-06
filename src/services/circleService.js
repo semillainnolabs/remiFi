@@ -32,17 +32,17 @@ class CircleService {
   async init() {
     try {
       if (!this.walletSDK) {
-        console.log("Initializing Circle Wallet SDK...");
+        //console.log("Initializing Circle Wallet SDK...");
 
         this.walletSDK = initiateDeveloperControlledWalletsClient({
           apiKey: config.circle.apiKey,
           entitySecret: config.circle.entitySecret,
         });
-        console.log("Circle Wallet SDK initialized");
+        //console.log("Circle Wallet SDK initialized");
       }
       return this.walletSDK;
     } catch (error) {
-      console.error("Error initializing Circle SDK:", error);
+      //console.error("Error initializing Circle SDK:", error);
       throw new Error("Failed to initialize Circle SDK: " + error.message);
     }
   }
@@ -75,7 +75,7 @@ class CircleService {
       const walletCount = walletData.data.wallets.length();
       return { walletCount, walletData };
     } catch (error) {
-      console.error("Error creating wallet:", error);
+      //console.error("Error creating wallet:", error);
       throw error;
     }
   }
@@ -108,7 +108,7 @@ class CircleService {
       const walletId = walletData.data.wallets[0].id;
       return { walletId, walletData };
     } catch (error) {
-      console.error("Error creating wallet:", error);
+      //console.error("Error creating wallet:", error);
       throw error;
     }
   }
@@ -143,7 +143,7 @@ class CircleService {
         network: network.name,
       };
     } catch (error) {
-      console.error("Error getting wallet balance:", error);
+      //console.error("Error getting wallet balance:", error);
       throw error;
     }
   }
@@ -173,7 +173,7 @@ class CircleService {
       });
       return response.data;
     } catch (error) {
-      console.error("Error sending transaction:", error);
+      //console.error("Error sending transaction:", error);
       throw error;
     }
   }
@@ -195,7 +195,7 @@ class CircleService {
       );
       return response.data.data.wallets[0]?.id;
     } catch (error) {
-      console.error("Error retrieving wallet ID:", error);
+      //console.error("Error retrieving wallet ID:", error);
       throw error;
     }
   }
@@ -356,7 +356,7 @@ class CircleService {
 
       // Wait 30 seconds before starting to poll for attestation
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      console.log("Starting attestation polling...");
+      //console.log("Starting attestation polling...");
 
       const attestation = await this.waitForAttestation(
         srcDomainId.toString(),
@@ -419,7 +419,7 @@ class CircleService {
         receiveTx: receiveTxResponse.data.id,
       };
     } catch (error) {
-      console.error("Error in cross-chain transfer:", error);
+      //console.error("Error in cross-chain transfer:", error);
       throw error;
     }
   }
@@ -456,9 +456,7 @@ class CircleService {
           }
         } catch (error) {
           if (error.response?.status === 404) {
-            console.log(
-              `Attempt ${attempts}/${maxAttempts}: Attestation not ready yet`,
-            );
+            //console.log(`Attempt ${attempts}/${maxAttempts}: Attestation not ready yet`,);
           } else {
             throw error;
           }
@@ -467,7 +465,7 @@ class CircleService {
       }
       throw new Error("Timeout waiting for attestation");
     } catch (error) {
-      console.error(`Failed to get attestation: ${error}`);
+      //console.error(`Failed to get attestation: ${error}`);
       throw error;
     }
   }
