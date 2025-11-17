@@ -76,7 +76,7 @@ class CircleService {
         walletSetId: walletSetResponse.data?.walletSet?.id ?? "",
       });
 
-      const walletCount = walletData.data.wallets.length();
+      const walletCount = walletData.data.wallets.length;
       return { walletCount, walletData };
     } catch (error) {
       //console.error("Error creating wallet:", error);

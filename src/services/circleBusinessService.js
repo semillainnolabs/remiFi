@@ -128,7 +128,7 @@ class CircleBusinessService {
 
     } catch (error) {
       //console.error("Error creating wallet:", error);
-      throw { message : `It looks like your wallet is not enabled yet to be used for deposits. Please contact the RemiFi Team to enable it.\n\nAlternatively, for testing purposes, you can get USDC right away from the Circle faucet(https://faucet.circle.com/), your wallet address in Arc-Testnet is:\n\n${destinationWallet.address}`};
+      throw { message : `It looks like your wallet is not enabled yet to be used for deposits. Please contact the RemiFi Team to enable it.\n\nAlternatively, for testing purposes, you can get USDC right away from the Circle faucet, your wallet address in Arc-Testnet is:\n\n${destinationWallet.address}`};
     }
 
     // Simulate waiting for the deposit and transfer to complete

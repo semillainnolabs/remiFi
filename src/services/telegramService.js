@@ -286,7 +286,7 @@ Always respond in plain text, without markdown, and avoid blockchain words. Feel
       if (!senderWallet) throw new Error(`You need a wallet to send money. Use /createWallet to get started!`);
 
       const balance = await this.circleService.getWalletBalance(senderWallet.walletid);
-      if (!balance.usdc || Number(amount) > Number(balance.usdc)) throw new Error(`Not enough balance of digital dollars in your wallet. Please make a deposit first!\n\nAlternatively, for testing purposes, you can get USDC from the Circle faucet(https://faucet.circle.com/), your wallet address in Arc-Testnet is:\n\n${senderWallet.address}`);
+      if (!balance.usdc || Number(amount) > Number(balance.usdc)) throw new Error(`Not enough balance of digital dollars in your wallet. Please make a deposit first!\n\nAlternatively, for testing purposes, you can get USDC from the Circle faucet, your wallet address in Arc-Testnet is:\n\n${senderWallet.address}`);
 
       let destinationAddress;
       if (recipient.startsWith('0x') && recipient.length === 42) {
